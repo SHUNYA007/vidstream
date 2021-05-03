@@ -76,7 +76,7 @@ class StreamingServer:
         slots : int
             amount of avaialable slots (not ready yet) (default = 8)
         quit_key : chr
-            key that has to be pressed to close connection (default = 'q')  
+            key that has to be pressed to close connection (default = 'q')
         """
         self.__host = host
         self.__port = port
@@ -139,43 +139,120 @@ class StreamingServer:
         else:
             print("Server not running!")
 
+
+    def __recvData(self, connection, address,headerSize,clientType):
+
+        header=b""
+        break_loop = False
+        leftToRecive=headerSize
+        if clientType==1:
+            if self.currentStack[self.currentFrame]:
+                # print('getting:',self.currentFrame)
+                return self.currentStack[self.currentFrame],break_loop
+
+
+
+        while len(header) < headerSize:
+            if leftToRecive<4096:
+                received = connection.recv(leftToRecive)
+            else:
+                received = connection.recv(4096)
+                leftToRecive-=4096
+            if received == b'':
+                connection.close()
+                self.__used_slots -= 1
+                break_loop = True
+                break
+            header += received
+
+        if break_loop:
+            return break_loop
+
+        packed_msg_size = header[:headerSize]
+        data = b""
+
+        header = struct.unpack(">LLL", packed_msg_size)
+        msg_size=header[2]
+        leftToRecive=msg_size
+
+        while len(data) < msg_size:
+            if leftToRecive<4096:
+                data += connection.recv(leftToRecive)
+            else:
+                data += connection.recv(4096)
+                leftToRecive-=4096
+        frame_data = data[:msg_size]
+
+
+        return frame_data,break_loop
+    # def __sendData(self,data=None):
+    #         if data:
+    #             status='getFrame'.encode('utf-8')
+    #             val1=data[0]
+    #             val2=data[1]
+    #         else:
+    #             status='OK'
+    #             val=self.currentFrame
+    #             val=0
+    #         if self
+    #         struct.pack('>16cLL',status,val1,val2)
+
+
+    def trackbarFuntion(self,val):
+        self.currentFrame=val-1
+        # if self.currentStack[val-1]==None:
+        #     self.currentFrame=val-1
+        # self.__recvData(self.connection,self.address,struct.calcsize('>LLL'),1,self.setFrame)
+
+
+
+    def __handleVideoPacket(self,windowName,totalFrames):
+        print(windowName)
+
+        cv2.namedWindow(windowName,cv2.WINDOW_AUTOSIZE)
+        trackbarName='Frame No:'
+        cv2.createTrackbar(trackbarName,windowName,1,totalFrames+1,self.trackbarFuntion)
+
+    def _recvsetupInfo(self,payload_size,connection,address):
+        setupInfo=connection.recv(payload_size)
+        if setupInfo:
+            setupInfo = struct.unpack(">LLL", setupInfo)
+            clientType=setupInfo[0]
+            print('clientType:',clientType)
+            if clientType==1:
+                totalFrames=setupInfo[1]
+                print('toto',totalFrames)
+                self.__handleVideoPacket(str(address),totalFrames)
+                self.currentFrame=0
+                self.currentStack=[None for i in range(totalFrames)] #can't create list for 10 hours video Improve on that
+
+                return clientType
+
+    def __processFrame(self,frame_data,clientType):
+        if clientType==1:
+            self.currentStack[self.currentFrame]=frame_data
+            self.currentFrame+=1
+
     def __client_connection(self, connection, address):
         """
         Handles the individual client connections and processes their stream data.
         """
-        payload_size = struct.calcsize('>L')
+        self.connection=connection
+        self.address=address
+        payload_size = struct.calcsize('>LLL')
         data = b""
+        clientType=self._recvsetupInfo(payload_size,connection,str(address))
 
         while self.__running:
-
-            break_loop = False
-
-            while len(data) < payload_size:
-                received = connection.recv(4096)
-                if received == b'':
-                    connection.close()
-                    self.__used_slots -= 1
-                    break_loop = True
-                    break
-                data += received
-
-            if break_loop:
-                break
-
-            packed_msg_size = data[:payload_size]
-            data = data[payload_size:]
-
-            msg_size = struct.unpack(">L", packed_msg_size)[0]
-
-            while len(data) < msg_size:
-                data += connection.recv(4096)
-
-            frame_data = data[:msg_size]
-            data = data[msg_size:]
+            cv2.setTrackbarPos('Frame No:',str(address),(int(self.currentFrame)+1))
+            frame_data,break_loop=self.__recvData(connection,address,payload_size,clientType)
 
             frame = pickle.loads(frame_data, fix_imports=True, encoding="bytes")
             frame = cv2.imdecode(frame, cv2.IMREAD_COLOR)
             cv2.imshow(str(address), frame)
+
+
+            self.__processFrame(frame_data,clientType)
             if cv2.waitKey(1) == ord(self.__quit_key):
                 connection.close()
                 self.__used_slots -= 1
@@ -221,7 +298,7 @@ class StreamingClient:
         start_stream : starts the client stream in a new thread
     """
 
-    def __init__(self, host, port):
+    def __init__(self, host, port,packetType=None):
         """
         Creates a new instance of StreamingClient.
 
@@ -238,6 +315,7 @@ class StreamingClient:
         self._configure()
         self.__running = False
         self.__client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.packetType=packetType
 
     def _configure(self):
         """
@@ -255,18 +333,25 @@ class StreamingClient:
         frame : the next frame to be processed (default = None)
         """
         return None
+    def _createHeader(self,packetLength):
+        return None
 
     def _cleanup(self):
         """
         Cleans up resources and closes everything.
         """
         cv2.destroyAllWindows()
-
+    def __sendData(self,size,data):
+        header=self._createHeader(size)
+        self.__client_socket.sendall(header + data)
+    def _sendsetupInfo(self):
+        return None
     def __client_streaming(self):
         """
         Main method for streaming the client data.
         """
         self.__client_socket.connect((self.__host, self.__port))
+        self.__client_socket.send(self._sendsetupInfo())
         while self.__running:
             frame = self._get_frame()
             result, frame = cv2.imencode('.jpg', frame, self.__encoding_parameters)
@@ -274,7 +359,7 @@ class StreamingClient:
             size = len(data)
 
             try:
-                self.__client_socket.sendall(struct.pack('>L', size) + data)
+                self.__sendData(size,data)
             except ConnectionResetError:
                 self.__running = False
             except ConnectionAbortedError:
@@ -366,7 +451,8 @@ class CameraClient(StreamingClient):
         self.__x_res = x_res
         self.__y_res = y_res
         self.__camera = cv2.VideoCapture(0)
-        super(CameraClient, self).__init__(host, port)
+        self.packetType=0
+        super(CameraClient, self).__init__(host, port,self.packetType)
 
     def _configure(self):
         """
@@ -395,6 +481,10 @@ class CameraClient(StreamingClient):
         self.__camera.release()
         cv2.destroyAllWindows()
 
+    def _createHeader(self,packetLength):
+        return struct.pack(">L",packetLength)
+    def _sendsetupInfo(self):
+        return None
 
 class VideoClient(StreamingClient):
     """
@@ -453,13 +543,15 @@ class VideoClient(StreamingClient):
         """
         self.__video = cv2.VideoCapture(video)
         self.__loop = loop
-        super(VideoClient, self).__init__(host, port)
+        self.packetType=1
+        super(VideoClient, self).__init__(host, port,self.packetType)
 
     def _configure(self):
         """
         Set video resolution and encoding parameters.
         """
-        self.__video.set(3, 1024)
+        self.__video
+        (3, 1024)
         self.__video.set(4, 576)
         super(VideoClient, self)._configure()
 
@@ -481,6 +573,16 @@ class VideoClient(StreamingClient):
         """
         self.__video.release()
         cv2.destroyAllWindows()
+
+    def _createHeader(self,packetLength):
+        totalFrames = int(self.__video.get(cv2.CAP_PROP_FRAME_COUNT))
+        currentFrameNo=int(self.__video.get(cv2.CAP_PROP_POS_FRAMES))
+        header= struct.pack(">LLL",currentFrameNo,totalFrames,packetLength)
+        return header
+
+    def _sendsetupInfo(self):
+        totalFrames = int(self.__video.get(cv2.CAP_PROP_FRAME_COUNT))
+        return struct.pack(">LLL",self.packetType,totalFrames,0)
 
 
 class ScreenShareClient(StreamingClient):
@@ -538,7 +640,8 @@ class ScreenShareClient(StreamingClient):
         """
         self.__x_res = x_res
         self.__y_res = y_res
-        super(ScreenShareClient, self).__init__(host, port)
+        self.packetType=2
+        super(ScreenShareClient, self).__init__(host, port,self.packetType)
 
     def _get_frame(self):
         """
@@ -554,3 +657,8 @@ class ScreenShareClient(StreamingClient):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame = cv2.resize(frame, (self.__x_res, self.__y_res), interpolation=cv2.INTER_AREA)
         return frame
+    def _createHeader(self,packetLength):
+        return struct.pack(">L",packetLength)
+
+    def _sendsetupInfo(self):
+        return None
