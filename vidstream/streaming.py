@@ -228,8 +228,9 @@ class StreamingServer:
 
                 return clientType
 
-    def __processFrame(self,frame_data,clientType):
+    def __processFrame(self,frame_data,clientType,address):
         if clientType==1:
+            cv2.setTrackbarPos('Frame No:',str(address),(int(self.currentFrame)+1))
             self.currentStack[self.currentFrame]=frame_data
             self.currentFrame+=1
 
@@ -244,7 +245,7 @@ class StreamingServer:
         clientType=self._recvsetupInfo(payload_size,connection,str(address))
 
         while self.__running:
-            cv2.setTrackbarPos('Frame No:',str(address),(int(self.currentFrame)+1))
+
             frame_data,break_loop=self.__recvData(connection,address,payload_size,clientType)
 
             frame = pickle.loads(frame_data, fix_imports=True, encoding="bytes")
@@ -252,7 +253,7 @@ class StreamingServer:
             cv2.imshow(str(address), frame)
 
 
-            self.__processFrame(frame_data,clientType)
+            self.__processFrame(frame_data,clientType,address)
             if cv2.waitKey(1) == ord(self.__quit_key):
                 connection.close()
                 self.__used_slots -= 1
