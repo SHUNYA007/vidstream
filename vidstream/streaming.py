@@ -145,10 +145,10 @@ class StreamingServer:
         header=b""
         break_loop = False
         leftToRecive=headerSize
-        if clientType==1:
-            if self.currentStack[self.currentFrame]:
-                # print('getting:',self.currentFrame)
-                return self.currentStack[self.currentFrame],break_loop
+        # if clientType==1:
+        #     if self.currentStack[self.currentFrame]:
+        #         print('getting:',self.currentFrame)
+        #         return self.currentStack[self.currentFrame],break_loop
 
 
 
@@ -185,25 +185,30 @@ class StreamingServer:
 
 
         return frame_data,break_loop
-    # def __sendData(self,data=None):
-    #         if data:
-    #             status='getFrame'.encode('utf-8')
-    #             val1=data[0]
-    #             val2=data[1]
-    #         else:
-    #             status='OK'
-    #             val=self.currentFrame
-    #             val=0
-    #         if self
-    #         struct.pack('>16cLL',status,val1,val2)
+    def __sendData(self,data=None):
+
+            if data:
+                status='getFrame'.encode('utf-8')
+                val1=data[0]
+                val2=data[1]
+            else:
+                status='OK'.encode('utf-8')
+                val=self.currentFrame
+                val=0
+            # if self
+
+            packedData=struct.pack('>16sLL',status,val1,val2)
+
+            self.connection.send(packedData)
+
 
 
     def trackbarFuntion(self,val):
-        self.currentFrame=val-1
-        # if self.currentStack[val-1]==None:
-        #     self.currentFrame=val-1
-        # self.__recvData(self.connection,self.address,struct.calcsize('>LLL'),1,self.setFrame)
-
+        if self.currentStack[val-1]==None:
+            self.currentFrame=val-1
+        #
+        sendData=[self.currentFrame,val-1]
+        self.__sendData(sendData)
 
 
     def __handleVideoPacket(self,windowName,totalFrames):
@@ -211,7 +216,7 @@ class StreamingServer:
 
         cv2.namedWindow(windowName,cv2.WINDOW_AUTOSIZE)
         trackbarName='Frame No:'
-        cv2.createTrackbar(trackbarName,windowName,1,totalFrames+1,self.trackbarFuntion)
+        cv2.createTrackbar(trackbarName,windowName,0,totalFrames+1,self.trackbarFuntion)
 
     def _recvsetupInfo(self,payload_size,connection,address):
         setupInfo=connection.recv(payload_size)
@@ -324,7 +329,7 @@ class StreamingClient:
         """
         self.__encoding_parameters = [int(cv2.IMWRITE_JPEG_QUALITY), 90]
 
-    def _get_frame(self):
+    def _get_frame(self,data=None):
         """
         Basic function for getting the next frame.
 
@@ -347,20 +352,33 @@ class StreamingClient:
         self.__client_socket.sendall(header + data)
     def _sendsetupInfo(self):
         return None
+    def __recvData(self):
+        calcsize= struct.calcsize('>16sLL')
+        status=self.__client_socket.recv(calcsize)
+        print(status)
+        return struct.unpack(">16sLL", status)
     def __client_streaming(self):
         """
         Main method for streaming the client data.
         """
         self.__client_socket.connect((self.__host, self.__port))
         self.__client_socket.send(self._sendsetupInfo())
+        frameInput=None
         while self.__running:
-            frame = self._get_frame()
+            frame = self._get_frame(frameInput)
+            frameInput=None
             result, frame = cv2.imencode('.jpg', frame, self.__encoding_parameters)
             data = pickle.dumps(frame, 0)
             size = len(data)
 
             try:
                 self.__sendData(size,data)
+                data=self.__recvData()
+                if data[0].decode('utf-8').rstrip('\x00')=='OK':
+                    continue
+                elif data[0].decode('utf-8').rstrip('\x00')=='getFrame':
+                    frameInput=data[1:]
+
             except ConnectionResetError:
                 self.__running = False
             except ConnectionAbortedError:
@@ -463,7 +481,7 @@ class CameraClient(StreamingClient):
         self.__camera.set(4, self.__y_res)
         super(CameraClient, self)._configure()
 
-    def _get_frame(self):
+    def _get_frame(self,data=None):
         """
         Gets the next camera frame.
 
@@ -556,7 +574,7 @@ class VideoClient(StreamingClient):
         self.__video.set(4, 576)
         super(VideoClient, self)._configure()
 
-    def _get_frame(self):
+    def _get_frame(self,data=None):
         """
         Gets the next video frame.
 
@@ -565,6 +583,8 @@ class VideoClient(StreamingClient):
 
         frame : the next video frame to be processed
         """
+        if data:
+            self.__video.set(1,data[1])
         ret, frame = self.__video.read()
         return frame
 
@@ -644,7 +664,7 @@ class ScreenShareClient(StreamingClient):
         self.packetType=2
         super(ScreenShareClient, self).__init__(host, port,self.packetType)
 
-    def _get_frame(self):
+    def _get_frame(self,data=None):
         """
         Gets the next screenshot.
 
