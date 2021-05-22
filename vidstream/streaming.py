@@ -204,6 +204,8 @@ class StreamingServer:
 
 
     def trackbarFuntion(self,val):
+        if val == 0:
+            val=1
         if self.currentStack[val-1]==None:
             self.currentFrame=val-1
         #
@@ -211,23 +213,27 @@ class StreamingServer:
         self.__sendData(sendData)
 
 
-    def __handleVideoPacket(self,windowName,totalFrames):
+    def __handleVideoPacket(self,windowName,totalFrames,width,height):
         print(windowName)
 
-        cv2.namedWindow(windowName,cv2.WINDOW_AUTOSIZE)
+        cv2.namedWindow(windowName)
+        cv2.resizeWindow(windowName,width,height)
         trackbarName='Frame No:'
         cv2.createTrackbar(trackbarName,windowName,0,totalFrames+1,self.trackbarFuntion)
 
     def _recvsetupInfo(self,payload_size,connection,address):
-        setupInfo=connection.recv(payload_size)
+        setupInfo=connection.recv(struct.calcsize(">LLLLL"))
         if setupInfo:
-            setupInfo = struct.unpack(">LLL", setupInfo)
+            setupInfo = struct.unpack(">LLLLL", setupInfo)
             clientType=setupInfo[0]
+
             print('clientType:',clientType)
             if clientType==1:
                 totalFrames=setupInfo[1]
-                print('toto',totalFrames)
-                self.__handleVideoPacket(str(address),totalFrames)
+                width=setupInfo[2]
+                height=setupInfo[3]
+                print('width',width,'height:',height)
+                self.__handleVideoPacket(str(address),totalFrames,width,height)
                 self.currentFrame=0
                 self.currentStack=[None for i in range(totalFrames)] #can't create list for 10 hours video Improve on that
 
@@ -355,14 +361,14 @@ class StreamingClient:
     def __recvData(self):
         calcsize= struct.calcsize('>16sLL')
         status=self.__client_socket.recv(calcsize)
-        print(status)
+        # print(status)
         return struct.unpack(">16sLL", status)
     def __client_streaming(self):
         """
         Main method for streaming the client data.
         """
         self.__client_socket.connect((self.__host, self.__port))
-        self.__client_socket.send(self._sendsetupInfo())
+        self.__client_socket.sendall(self._sendsetupInfo())
         frameInput=None
         while self.__running:
             frame = self._get_frame(frameInput)
@@ -602,8 +608,11 @@ class VideoClient(StreamingClient):
         return header
 
     def _sendsetupInfo(self):
+        width  = int(self.__video.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(self.__video.get(cv2.CAP_PROP_FRAME_HEIGHT))
         totalFrames = int(self.__video.get(cv2.CAP_PROP_FRAME_COUNT))
-        return struct.pack(">LLL",self.packetType,totalFrames,0)
+        return struct.pack(">LLLLL",self.packetType,totalFrames,width,height,0)
+
 
 
 class ScreenShareClient(StreamingClient):
